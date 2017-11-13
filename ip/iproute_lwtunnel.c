@@ -562,11 +562,9 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 
             if (action == SEG6_LOCAL_ACTION_BPF) {
                 NEXT_ARG();
-                fprintf(stdout, "loading bpf ..\n");
-                if (lwt_parse_bpf(rta, len, &argc, &argv, LWT_BPF_SEG6LOCAL,
+                if (lwt_parse_bpf(rta, len, &argc, &argv, SEG6_LOCAL_BPF,
                           BPF_PROG_TYPE_LWT_SEG6LOCAL) < 0)
                     return -1;
-                fprintf(stdout, "bpf loaded!\n");
             }
 		} else if (strcmp(*argv, "table") == 0) {
 			NEXT_ARG();
