@@ -11,8 +11,8 @@
  *      2 of the License, or (at your option) any later version.
  */
 
-#ifndef _LINUX_SEG6_LOCAL_H
-#define _LINUX_SEG6_LOCAL_H
+#ifndef _UAPI_LINUX_SEG6_LOCAL_H
+#define _UAPI_LINUX_SEG6_LOCAL_H
 
 #include <linux/seg6.h>
 
@@ -25,6 +25,7 @@ enum {
 	SEG6_LOCAL_NH6,
 	SEG6_LOCAL_IIF,
 	SEG6_LOCAL_OIF,
+	SEG6_LOCAL_BPF,
 	__SEG6_LOCAL_MAX,
 };
 #define SEG6_LOCAL_MAX (__SEG6_LOCAL_MAX - 1)
@@ -59,6 +60,8 @@ enum {
 	SEG6_LOCAL_ACTION_END_AS	= 13,
 	/* forward to SR-unaware VNF with masquerading */
 	SEG6_LOCAL_ACTION_END_AM	= 14,
+    /* eBPF action */
+	SEG6_LOCAL_ACTION_BPF   	= 15,
 
 	__SEG6_LOCAL_ACTION_MAX,
 };

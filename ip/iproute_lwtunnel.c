@@ -167,6 +167,7 @@ static const char *seg6_action_names[SEG6_LOCAL_ACTION_MAX + 1] = {
 	[SEG6_LOCAL_ACTION_END_S]		= "End.S",
 	[SEG6_LOCAL_ACTION_END_AS]		= "End.AS",
 	[SEG6_LOCAL_ACTION_END_AM]		= "End.AM",
+	[SEG6_LOCAL_ACTION_BPF]		    = "bpf",
 };
 
 static const char *format_action_type(int action)
@@ -238,6 +239,10 @@ static void print_encap_seg6local(FILE *fp, struct rtattr *encap)
 		fprintf(fp, "oif %s ",
 			if_indextoname(oif, ifbuf) ?: "<unknown>");
 	}
+
+    if (tb[SEG6_LOCAL_BPF]) {
+		fprintf(fp, "%s ", rta_getattr_str(tb[SEG6_LOCAL_BPF]));
+    }
 }
 
 static void print_encap_mpls(FILE *fp, struct rtattr *encap)
@@ -527,6 +532,11 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
 	return 0;
 }
 
+static int lwt_parse_bpf(struct rtattr *rta, size_t len,
+			 int *argcp, char ***argvp,
+			 int attr, const enum bpf_prog_type bpf_type); // TODO keep this here ?
+
+
 static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 				 char ***argvp)
 {
@@ -549,6 +559,15 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 			if (!action)
 				invarg("\"action\" value is invalid\n", *argv);
 			rta_addattr32(rta, len, SEG6_LOCAL_ACTION, action);
+
+            if (action == SEG6_LOCAL_ACTION_BPF) {
+                NEXT_ARG();
+                fprintf(stdout, "loading bpf ..\n");
+                if (lwt_parse_bpf(rta, len, &argc, &argv, LWT_BPF_SEG6LOCAL,
+                          BPF_PROG_TYPE_LWT_SEG6LOCAL) < 0)
+                    return -1;
+                fprintf(stdout, "bpf loaded!\n");
+            }
 		} else if (strcmp(*argv, "table") == 0) {
 			NEXT_ARG();
 			if (table_ok++)
@@ -608,7 +627,7 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 			} else {
 				continue;
 			}
-		} else {
+        } else {
 			break;
 		}
 		argc--; argv++;
