@@ -167,7 +167,7 @@ static const char *seg6_action_names[SEG6_LOCAL_ACTION_MAX + 1] = {
 	[SEG6_LOCAL_ACTION_END_S]		= "End.S",
 	[SEG6_LOCAL_ACTION_END_AS]		= "End.AS",
 	[SEG6_LOCAL_ACTION_END_AM]		= "End.AM",
-	[SEG6_LOCAL_ACTION_BPF]		    = "bpf",
+	[SEG6_LOCAL_ACTION_BPF]		        = "End.BPF",
 };
 
 static const char *format_action_type(int action)
@@ -240,9 +240,14 @@ static void print_encap_seg6local(FILE *fp, struct rtattr *encap)
 			if_indextoname(oif, ifbuf) ?: "<unknown>");
 	}
 
-    if (tb[SEG6_LOCAL_BPF]) {
-		fprintf(fp, "%s ", rta_getattr_str(tb[SEG6_LOCAL_BPF]));
-    }
+	if (tb[SEG6_LOCAL_BPF]) {
+		struct rtattr *tb_bpf[LWT_BPF_PROG_MAX+1];
+
+		parse_rtattr_nested(tb_bpf, LWT_BPF_PROG_MAX, tb[SEG6_LOCAL_BPF]);
+
+		if (tb_bpf[LWT_BPF_PROG_NAME])
+			fprintf(fp, "%s ", rta_getattr_str(tb_bpf[LWT_BPF_PROG_NAME]));
+	}
 }
 
 static void print_encap_mpls(FILE *fp, struct rtattr *encap)

@@ -30,7 +30,7 @@ enum {
 };
 #define SEG6_LOCAL_MAX (__SEG6_LOCAL_MAX - 1)
 
-enum {
+enum seg6_local_action {
 	SEG6_LOCAL_ACTION_UNSPEC	= 0,
 	/* node segment */
 	SEG6_LOCAL_ACTION_END		= 1,
@@ -60,8 +60,8 @@ enum {
 	SEG6_LOCAL_ACTION_END_AS	= 13,
 	/* forward to SR-unaware VNF with masquerading */
 	SEG6_LOCAL_ACTION_END_AM	= 14,
-    /* eBPF action */
-	SEG6_LOCAL_ACTION_BPF   	= 15,
+	/* custom BPF action */
+	SEG6_LOCAL_ACTION_BPF		= 15,
 
 	__SEG6_LOCAL_ACTION_MAX,
 };
