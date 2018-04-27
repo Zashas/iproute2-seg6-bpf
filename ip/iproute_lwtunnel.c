@@ -567,6 +567,7 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 
             if (action == SEG6_LOCAL_ACTION_BPF) {
                 NEXT_ARG();
+		printf("prog type: %d\n", BPF_PROG_TYPE_LWT_SEG6LOCAL);
                 if (lwt_parse_bpf(rta, len, &argc, &argv, SEG6_LOCAL_BPF,
                           BPF_PROG_TYPE_LWT_SEG6LOCAL) < 0)
                     return -1;

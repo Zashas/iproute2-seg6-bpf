@@ -94,6 +94,7 @@ enum bpf_cmd {
 	BPF_MAP_GET_FD_BY_ID,
 	BPF_OBJ_GET_INFO_BY_FD,
 	BPF_PROG_QUERY,
+	BPF_RAW_TRACEPOINT_OPEN,
 };
 
 enum bpf_map_type {
@@ -133,6 +134,9 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_SOCK_OPS,
 	BPF_PROG_TYPE_SK_SKB,
 	BPF_PROG_TYPE_CGROUP_DEVICE,
+	BPF_PROG_TYPE_SK_MSG,
+	BPF_PROG_TYPE_RAW_TRACEPOINT,
+	BPF_PROG_TYPE_CGROUP_SOCK_ADDR,
 	BPF_PROG_TYPE_LWT_SEG6LOCAL,
 };
 
@@ -144,6 +148,13 @@ enum bpf_attach_type {
 	BPF_SK_SKB_STREAM_PARSER,
 	BPF_SK_SKB_STREAM_VERDICT,
 	BPF_CGROUP_DEVICE,
+	BPF_SK_MSG_VERDICT,
+	BPF_CGROUP_INET4_BIND,
+	BPF_CGROUP_INET6_BIND,
+	BPF_CGROUP_INET4_CONNECT,
+	BPF_CGROUP_INET6_CONNECT,
+	BPF_CGROUP_INET4_POST_BIND,
+	BPF_CGROUP_INET6_POST_BIND,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -232,6 +243,28 @@ enum bpf_attach_type {
 #define BPF_F_RDONLY		(1U << 3)
 #define BPF_F_WRONLY		(1U << 4)
 
+/* Flag for stack_map, store build_id+offset instead of pointer */
+#define BPF_F_STACK_BUILD_ID	(1U << 5)
+
+enum bpf_stack_build_id_status {
+	/* user space need an empty entry to identify end of a trace */
+	BPF_STACK_BUILD_ID_EMPTY = 0,
+	/* with valid build_id and offset */
+	BPF_STACK_BUILD_ID_VALID = 1,
+	/* couldn't get build_id, fallback to ip */
+	BPF_STACK_BUILD_ID_IP = 2,
+};
+
+#define BPF_BUILD_ID_SIZE 20
+struct bpf_stack_build_id {
+	__s32		status;
+	unsigned char	build_id[BPF_BUILD_ID_SIZE];
+	union {
+		__u64	offset;
+		__u64	ip;
+	};
+};
+
 union bpf_attr {
 	struct { /* anonymous struct used by BPF_MAP_CREATE command */
 		__u32	map_type;	/* one of enum bpf_map_type */
@@ -271,6 +304,11 @@ union bpf_attr {
 		__u32		prog_flags;
 		char		prog_name[BPF_OBJ_NAME_LEN];
 		__u32		prog_ifindex;	/* ifindex of netdev to prep for */
+		/* For some prog types expected attach type must be known at
+		 * load time to verify attach type specific parts of prog
+		 * (context accesses, allowed helpers, etc).
+		 */
+		__u32		expected_attach_type;
 	};
 
 	struct { /* anonymous struct used by BPF_OBJ_* commands */
@@ -321,6 +359,11 @@ union bpf_attr {
 		__aligned_u64	prog_ids;
 		__u32		prog_cnt;
 	} query;
+
+	struct {
+		__u64 name;
+		__u32 prog_fd;
+	} raw_tracepoint;
 } __attribute__((aligned(8)));
 
 /* BPF helper function descriptions:
@@ -698,46 +741,66 @@ union bpf_attr {
  *	@pt_regs: pointer to struct pt_regs
  *	@rc: the return value to set
  *
+ * int bpf_msg_redirect_map(map, key, flags)
+ *     Redirect msg to a sock in map using key as a lookup key for the
+ *     sock in map.
+ *     @map: pointer to sockmap
+ *     @key: key to lookup sock in map
+ *     @flags: reserved for future use
+ *     Return: SK_PASS
+ *
+ * int bpf_bind(ctx, addr, addr_len)
+ *     Bind socket to address. Only binding to IP is supported, no port can be
+ *     set in addr.
+ *     @ctx: pointer to context of type bpf_sock_addr
+ *     @addr: pointer to struct sockaddr to bind socket to
+ *     @addr_len: length of sockaddr structure
+ *     Return: 0 on success or negative error code
+ *
  * int lwt_push_encap(skb, type, hdr, len)
- *	Push an encapsulation header on top of current packet
- *	@type: type of header to encapsulate :
- *          - BPF_LWT_ENCAP_SEG6 (IPv6 header with Segment Routing Header)
- *          - BPF_LWT_ENCAP_SEG6_INLINE (push a IPv6 Segment Routing Header,
- *					the skb must contain a IPv6 header)
- *	@hdr: pointer where to copy the header from
- *	@len: size of hdr in bytes
- *	Return: 0 on success or negative error
+ *     Push an encapsulation header on top of current packet.
+ *     @type: type of header to push :
+ *          - BPF_LWT_ENCAP_SEG6 (push an IPv6 Segment Routing Header, struct
+ *                    ipv6_sr_hdr, the helper will add the outer IPv6 header)
+ *          - BPF_LWT_ENCAP_SEG6_INLINE (push an IPv6 Segment Routing Header,
+ *                       struct ipv6_sr_hdr, inside the existing IPv6 header)
+ *     @hdr: pointer where to copy the header from
+ *     @len: size of hdr in bytes
+ *     Return: 0 on success or negative error
  *
  * int lwt_seg6_store_bytes(skb, offset, from, len)
- *	store bytes into the outermost Segment Routing header of an IPv6 packet.
- *	Only offsets starting from the SRH segments_left field are accepted.
- *	@skb: pointer to skb
- *	@offset: offset within packet from skb->data
- *	@from: pointer where to copy bytes from
- *	@len: number of bytes to store into packet
- *	Return: 0 on success or negative error
+ *     Store bytes into the outermost Segment Routing header of an IPv6 header.
+ *     Only the flags, tag and TLVs can be modified.
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data
+ *     @from: pointer where to copy bytes from
+ *     @len: number of bytes to store into packet
+ *     Return: 0 on success or negative error
  *
  * int lwt_seg6_adjust_srh(skb, offset, delta)
- *	Adjust the size of the outermost IPv6 Segment Routing Header
- *	(grow if delta > 0, else shrink)
- *	@skb: pointer to skb
- *	@offset: offset within packet from skb->data where SRH will grow/shrink
- *	@delta: a positive/negative integer
- *	Return: 0 on success or negative on error
+ *     Adjust the size allocated to TLVs in the outermost IPv6 Segment Routing
+ *     Header (grow if delta > 0, else shrink)
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data where SRH will grow/shrink,
+ *              only offsets after the segments are accepted
+ *     @delta: a positive/negative integer
+ *     Return: 0 on success or negative on error
  *
  * int lwt_seg6_action(skb, action, param, param_len)
- *	Apply a IPv6 Segment Routing action on a packet with an IPv6 Segment
- *	Routing Header.
- *	@action:
- *		- End.X: SEG6_LOCAL_ACTION_END_X (type of param: struct in6_addr)
- *		- End.T: SEG6_LOCAL_ACTION_END_T (type of param: int)
- *		- End.B6: SEG6_LOCAL_ACTION_END_B6 (type of param: buffer with
- *						    SRH)
- *		- End.B6.Encap: SEG6_LOCAL_ACTION_END_B6_ENCAP (type of param:
- *								buffer with SRH)
- *	@param: pointer to value containing the parameter required by the action
- *	@param_len: length of param in bytes
- *	Return: 0 on success or negative error
+ *     Apply a IPv6 Segment Routing action on a packet with an IPv6 Segment
+ *     Routing Header.
+ *     @action:
+ *              - End.X: SEG6_LOCAL_ACTION_END_X
+ *                                           (type of param: struct in6_addr)
+ *              - End.T: SEG6_LOCAL_ACTION_END_T
+ *                                           (type of param: int)
+ *              - End.B6: SEG6_LOCAL_ACTION_END_B6
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *              - End.B6.Encap: SEG6_LOCAL_ACTION_END_B6_ENCAP
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *     @param: pointer to the parameter required by the action
+ *     @param_len: length of param in bytes
+ *     Return: 0 on success or negative error
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -800,6 +863,11 @@ union bpf_attr {
 	FN(getsockopt),			\
 	FN(override_return),		\
 	FN(sock_ops_cb_flags_set),	\
+	FN(msg_redirect_map),		\
+	FN(msg_apply_bytes),		\
+	FN(msg_cork_bytes),		\
+	FN(msg_pull_data),		\
+	FN(bind),			\
 	FN(lwt_push_encap),		\
 	FN(lwt_seg6_store_bytes),	\
 	FN(lwt_seg6_adjust_srh),	\
@@ -938,6 +1006,15 @@ struct bpf_sock {
 	__u32 protocol;
 	__u32 mark;
 	__u32 priority;
+	__u32 src_ip4;		/* Allows 1,2,4-byte read.
+				 * Stored in network byte order.
+				 */
+	__u32 src_ip6[4];	/* Allows 1,2,4-byte read.
+				 * Stored in network byte order.
+				 */
+	__u32 src_port;		/* Allows 4-byte read.
+				 * Stored in host byte order
+				 */
 };
 
 #define XDP_PACKET_HEADROOM 256
@@ -972,6 +1049,14 @@ enum sk_action {
 	SK_PASS,
 };
 
+/* user accessible metadata for SK_MSG packet hook, new fields must
+ * be added to the end of this structure
+ */
+struct sk_msg_md {
+	void *data;
+	void *data_end;
+};
+
 #define BPF_TAG_SIZE	8
 
 struct bpf_prog_info {
@@ -1004,6 +1089,26 @@ struct bpf_map_info {
 	__u64 netns_dev;
 	__u64 netns_ino;
 } __attribute__((aligned(8)));
+
+/* User bpf_sock_addr struct to access socket fields and sockaddr struct passed
+ * by user and intended to be used by socket (e.g. to bind to, depends on
+ * attach attach type).
+ */
+struct bpf_sock_addr {
+	__u32 user_family;	/* Allows 4-byte read, but no write. */
+	__u32 user_ip4;		/* Allows 1,2,4-byte read and 4-byte write.
+				 * Stored in network byte order.
+				 */
+	__u32 user_ip6[4];	/* Allows 1,2,4-byte read an 4-byte write.
+				 * Stored in network byte order.
+				 */
+	__u32 user_port;	/* Allows 4-byte read and write.
+				 * Stored in network byte order
+				 */
+	__u32 family;		/* Allows 4-byte read, but no write */
+	__u32 type;		/* Allows 4-byte read, but no write */
+	__u32 protocol;		/* Allows 4-byte read, but no write */
+};
 
 /* User bpf_sock_ops struct to access socket values and specify request ops
  * and their replies.
@@ -1157,6 +1262,10 @@ struct bpf_cgroup_dev_ctx {
 	__u32 access_type;
 	__u32 major;
 	__u32 minor;
+};
+
+struct bpf_raw_tracepoint_args {
+	__u64 args[0];
 };
 
 #endif /* _UAPI__LINUX_BPF_H__ */
