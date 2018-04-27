@@ -5,8 +5,8 @@
  * modify it under the terms of version 2 of the GNU General Public
  * License as published by the Free Software Foundation.
  */
-#ifndef __LINUX_BPF_H__
-#define __LINUX_BPF_H__
+#ifndef _UAPI__LINUX_BPF_H__
+#define _UAPI__LINUX_BPF_H__
 
 #include <linux/types.h>
 #include <linux/bpf_common.h>
@@ -130,6 +130,7 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_LWT_XMIT,
 	BPF_PROG_TYPE_SOCK_OPS,
 	BPF_PROG_TYPE_SK_SKB,
+	BPF_PROG_TYPE_LWT_SEG6LOCAL,
 };
 
 enum bpf_attach_type {
@@ -583,6 +584,51 @@ union bpf_attr {
  *	@map: pointer to sockmap to update
  *	@key: key to insert/update sock in map
  *	@flags: same flags as map update elem
+ *
+ * int lwt_push_encap(skb, type, hdr, len)
+ *     Push an encapsulation header on top of current packet.
+ *     @type: type of header to push :
+ *          - BPF_LWT_ENCAP_SEG6 (push an IPv6 Segment Routing Header, struct
+ *                    ipv6_sr_hdr, the helper will add the outer IPv6 header)
+ *          - BPF_LWT_ENCAP_SEG6_INLINE (push an IPv6 Segment Routing Header,
+ *                       struct ipv6_sr_hdr, inside the existing IPv6 header)
+ *     @hdr: pointer where to copy the header from
+ *     @len: size of hdr in bytes
+ *     Return: 0 on success or negative error
+ *
+ * int lwt_seg6_store_bytes(skb, offset, from, len)
+ *     Store bytes into the outermost Segment Routing header of an IPv6 header.
+ *     Only the flags, tag and TLVs can be modified.
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data
+ *     @from: pointer where to copy bytes from
+ *     @len: number of bytes to store into packet
+ *     Return: 0 on success or negative error
+ *
+ * int lwt_seg6_adjust_srh(skb, offset, delta)
+ *     Adjust the size allocated to TLVs in the outermost IPv6 Segment Routing
+ *     Header (grow if delta > 0, else shrink)
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data where SRH will grow/shrink,
+ *              only offsets after the segments are accepted
+ *     @delta: a positive/negative integer
+ *     Return: 0 on success or negative on error
+ *
+ * int lwt_seg6_action(skb, action, param, param_len)
+ *     Apply a IPv6 Segment Routing action on a packet with an IPv6 Segment
+ *     Routing Header.
+ *     @action:
+ *              - End.X: SEG6_LOCAL_ACTION_END_X
+ *                                           (type of param: struct in6_addr)
+ *              - End.T: SEG6_LOCAL_ACTION_END_T
+ *                                           (type of param: int)
+ *              - End.B6: SEG6_LOCAL_ACTION_END_B6
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *              - End.B6.Encap: SEG6_LOCAL_ACTION_END_B6_ENCAP
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *     @param: pointer to the parameter required by the action
+ *     @param_len: length of param in bytes
+ *     Return: 0 on success or negative error
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -639,6 +685,10 @@ union bpf_attr {
 	FN(redirect_map),		\
 	FN(sk_redirect_map),		\
 	FN(sock_map_update),		\
+	FN(lwt_push_encap),		\
+	FN(lwt_seg6_store_bytes),	\
+	FN(lwt_seg6_adjust_srh),	\
+	FN(lwt_seg6_action),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
@@ -691,6 +741,12 @@ enum bpf_func_id {
 /* Mode for BPF_FUNC_skb_adjust_room helper. */
 enum bpf_adj_room_mode {
 	BPF_ADJ_ROOM_NET,
+};
+
+/* Encapsulation type for BPF_FUNC_lwt_push_encap helper. */
+enum bpf_lwt_encap_mode {
+	BPF_LWT_ENCAP_SEG6,
+	BPF_LWT_ENCAP_SEG6_INLINE
 };
 
 /* user accessible mirror of in-kernel sk_buff.
@@ -864,4 +920,4 @@ enum {
 #define TCP_BPF_IW		1001	/* Set TCP initial congestion window */
 #define TCP_BPF_SNDCWND_CLAMP	1002	/* Set sndcwnd_clamp */
 
-#endif /* __LINUX_BPF_H__ */
+#endif /* _UAPI__LINUX_BPF_H__ */
